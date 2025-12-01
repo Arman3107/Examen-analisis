@@ -1,155 +1,181 @@
+import streamlit as st
 import numpy as np
+import pandas as pd
 
-print("\n===== RESOLVEDOR DE ARMADURAS 2D - MÉTODO DE RIGIDEZ =====\n")
+st.set_page_config(page_title="Método de Rigidez 2D - Armaduras", layout="wide")
 
-# ================================================================
-# INGRESO DE NODOS
-# ================================================================
-n_nodos = int(input("¿Cuántos nodos tiene la armadura? "))
+st.title("🧱 Método de Rigidez 2D para Armaduras (Streamlit)")
 
-nodes = {}
-for i in range(1, n_nodos + 1):
-    print(f"\nNodo {i}:")
-    x = float(input("  x = "))
-    y = float(input("  y = "))
-    nodes[i] = np.array([x, y])
+st.write("""
+Aplicación interactiva para resolver armaduras por el **Método de Rigidez**.
+Ingrese nodos, barras, apoyos y cargas, y obtenga desplazamientos, reacciones y fuerzas internas.
+""")
 
-# ================================================================
-# INGRESO DE MIEMBROS
-# ================================================================
-n_members = int(input("\n¿Cuántos miembros (barras) tiene la armadura? "))
+# -----------------------------------------------------
+# Sección 1: Datos de nodos
+# -----------------------------------------------------
 
-members = []
-EA_list = []
+st.header("1️⃣ Nodos (coordenadas)")
 
-for i in range(1, n_members + 1):
-    print(f"\nMiembro {i}:")
-    n1 = int(input("  Nodo inicial: "))
-    n2 = int(input("  Nodo final: "))
-    EA = float(input("  EA del miembro: "))
-    members.append((n1, n2))
-    EA_list.append(EA)
+nodes_df = st.data_editor(
+    pd.DataFrame(
+        {"Nodo": [1, 2], "x": [0.0, 4.0], "y": [0.0, 0.0]}
+    ),
+    num_rows="dynamic",
+    key="nodes"
+)
 
-# ================================================================
-# MATRIZ GLOBAL
-# ================================================================
-ndof = 2 * n_nodos
-K = np.zeros((ndof, ndof))
+# -----------------------------------------------------
+# Sección 2: Barras
+# -----------------------------------------------------
 
-for idx, (i, j) in enumerate(members):
-    xi, yi = nodes[i]
-    xj, yj = nodes[j]
+st.header("2️⃣ Barras (conexiones y EA)")
 
-    dx = xj - xi
-    dy = yj - yi
-    L = np.hypot(dx, dy)
-    cx = dx / L
-    cy = dy / L
-    EA = EA_list[idx]
+bars_df = st.data_editor(
+    pd.DataFrame(
+        {"Barra": [1], "i": [1], "j": [2], "EA": [200000]}
+    ),
+    num_rows="dynamic",
+    key="bars"
+)
 
-    k_local = (EA / L) * np.array([
-        [ cx*cx, cx*cy, -cx*cx, -cx*cy],
-        [ cx*cy, cy*cy, -cx*cy, -cy*cy],
-        [-cx*cx, -cx*cy, cx*cx, cx*cy],
-        [-cx*cy, -cy*cy, cx*cy, cy*cy]
-    ])
+# -----------------------------------------------------
+# Sección 3: Restricciones
+# -----------------------------------------------------
 
-    dof = [
-        2*(i-1), 2*(i-1)+1,
-        2*(j-1), 2*(j-1)+1
-    ]
+st.header("3️⃣ Restricciones (Apoyos)")
 
-    for a in range(4):
-        for b in range(4):
-            K[dof[a], dof[b]] += k_local[a, b]
+supports_df = st.data_editor(
+    pd.DataFrame(
+        {"Nodo": [1], "Ux_fijo": [True], "Uy_fijo": [True]}
+    ),
+    num_rows="dynamic",
+    key="supports"
+)
 
-# ================================================================
-# CARGAS
-# ================================================================
-F = np.zeros(ndof)
+# -----------------------------------------------------
+# Sección 4: Cargas
+# -----------------------------------------------------
 
-n_cargas = int(input("\n¿Cuántas cargas nodales existen? "))
+st.header("4️⃣ Cargas nodales")
 
-for _ in range(n_cargas):
-    print("\nCarga nodal:")
-    nodo = int(input("  Nodo: "))
-    fx = float(input("  Fx = "))
-    fy = float(input("  Fy = "))
-    F[2*(nodo-1)] += fx
-    F[2*(nodo-1) + 1] += fy
+loads_df = st.data_editor(
+    pd.DataFrame(
+        {"Nodo": [2], "Fx": [0.0], "Fy": [-100.0]}
+    ),
+    num_rows="dynamic",
+    key="loads"
+)
 
-# ================================================================
-# APOYOS (RESTRICCIONES)
-# ================================================================
-fixed = []
-print("\n=== Restricciones (apoyos) ===")
-print("Ingrese DOFs fijos. Ejemplo: Nodo 1 Ux = 1, Uy = 2.")
+# -----------------------------------------------------
+# Función del método de rigidez
+# -----------------------------------------------------
 
-n_rest = int(input("¿Cuántas restricciones hay? "))
+def solve_truss(nodes, bars, supports, loads):
+    # Convert DataFrames to arrays
+    coords = {int(n): np.array([float(x), float(y)]) for n, x, y in nodes}
+    num_nodes = len(coords)
+    dof = 2 * num_nodes
 
-for _ in range(n_rest):
-    nodo = int(input("\n  Nodo: "))
-    tipo = input("  Grado fijo (Ux/ Uy): ").lower()
+    # Global stiffness matrix
+    K = np.zeros((dof, dof))
 
-    if tipo == "ux":
-        fixed.append(2*(nodo-1))
-    elif tipo == "uy":
-        fixed.append(2*(nodo-1)+1)
+    # Assemble bars
+    for _, i, j, EA in bars:
+        i = int(i); j = int(j)
+        xi, yi = coords[i]
+        xj, yj = coords[j]
+        L = np.sqrt((xj - xi)**2 + (yj - yi)**2)
+        c = (xj - xi) / L
+        s = (yj - yi) / L
 
-free = [i for i in range(ndof) if i not in fixed]
+        k_local = (EA / L) * np.array([
+            [ c*c,  c*s, -c*c, -c*s],
+            [ c*s,  s*s, -c*s, -s*s],
+            [-c*c, -c*s,  c*c,  c*s],
+            [-c*s, -s*s,  c*s,  s*s]
+        ])
 
-# MATRICES REDUCIDAS
-K_ff = K[np.ix_(free, free)]
-F_f = F[free]
+        index = [
+            2*(i-1), 2*(i-1)+1,
+            2*(j-1), 2*(j-1)+1
+        ]
 
-# ================================================================
-# SOLUCIÓN
-# ================================================================
-u = np.zeros(ndof)
-u_free = np.linalg.solve(K_ff, F_f)
-u[free] = u_free
+        for a in range(4):
+            for b in range(4):
+                K[index[a], index[b]] += k_local[a, b]
 
-# ================================================================
-# REACCIONES
-# ================================================================
-K_cf = K[np.ix_(fixed, free)]
-R = K_cf.dot(u_free)
+    # Load vector
+    F = np.zeros(dof)
+    for node, Fx, Fy in loads:
+        F[2*(node-1)] = Fx
+        F[2*(node-1)+1] = Fy
 
-# ================================================================
-# FUERZAS EN BARRAS
-# ================================================================
-forces = []
+    # Apply supports
+    fixed_dofs = []
+    for node, ux, uy in supports:
+        if ux:
+            fixed_dofs.append(2*(node-1))
+        if uy:
+            fixed_dofs.append(2*(node-1)+1)
 
-print("\n===== RESULTADOS =====\n")
+    free = [i for i in range(dof) if i not in fixed_dofs]
 
-print("\n--- DESPLAZAMIENTOS NODALES ---")
-for i in range(n_nodos):
-    print(f"Nodo {i+1}: Ux = {u[2*i]:.6f}, Uy = {u[2*i+1]:.6f}")
+    Kff = K[np.ix_(free, free)]
+    Ff = F[free]
 
-print("\n--- REACCIONES EN APOYOS ---")
-for i, dof in enumerate(fixed):
-    nodo = dof//2 + 1
-    comp = "Ux" if dof % 2 == 0 else "Uy"
-    print(f"Reacción en nodo {nodo} {comp}: {R[i]:.6f}")
+    # Solve
+    Uf = np.linalg.solve(Kff, Ff)
 
-print("\n--- FUERZAS AXIALES EN MIEMBROS ---")
-for idx, (i, j) in enumerate(members):
-    xi, yi = nodes[i]
-    xj, yj = nodes[j]
-    dx = xj - xi
-    dy = yj - yi
-    L = np.hypot(dx, dy)
-    cx = dx / L
-    cy = dy / L
+    U = np.zeros(dof)
+    U[free] = Uf
 
-    dof = [
-        2*(i-1), 2*(i-1)+1,
-        2*(j-1), 2*(j-1)+1
-    ]
+    # Reactions
+    R = K @ U - F
 
-    u_local = u[dof]
-    EA = EA_list[idx]
+    # Bar forces
+    bar_forces = []
+    for _, i, j, EA in bars:
+        i = int(i); j = int(j)
+        xi, yi = coords[i]
+        xj, yj = coords[j]
+        L = np.sqrt((xj - xi)**2 + (yj - yi)**2)
+        c = (xj - xi) / L
+        s = (yj - yi) / L
 
-    T = (EA / L) * np.array([-cx, -cy, cx, cy]).dot(u_local)
+        u_i = U[2*(i-1):2*(i-1)+2]
+        u_j = U[2*(j-1):2*(j-1)+2]
 
-    print(f"Miembro {i}-{j}: {T:.6f} (tensión + / compresión -)")
+        axial = EA / L * np.array([-c, -s, c, s]) @ np.hstack([u_i, u_j])
+        bar_forces.append(axial)
+
+    return U, R, bar_forces
+
+
+# -----------------------------------------------------
+# Botón para calcular
+# -----------------------------------------------------
+
+st.header("5️⃣ Resolver armadura")
+
+if st.button(" Calcular ", type="primary"):
+
+    U, R, bar_forces = solve_truss(
+        nodes_df.values,
+        bars_df.values,
+        supports_df.values,
+        loads_df.values
+    )
+
+    st.success("Cálculo completado")
+
+    st.subheader("Desplazamientos nodales")
+    st.write(U.reshape(-1, 2))
+
+    st.subheader("Reacciones en apoyos")
+    st.write(R.reshape(-1, 2))
+
+    st.subheader("Fuerzas axiales en barras")
+    st.write(bar_forces)
+
+
